@@ -95,6 +95,8 @@ public class DataSimulator
 		// pi radians -> Nyquist frequency
 		double cosPhi = Math.cos(dPhi);
 		double sinPhi = Math.sin(dPhi);
+		
+		
 
 		// keeps track of signal and sample values from most recent data point
 		double signalX = rand.nextGaussian() * sigN;
@@ -109,74 +111,58 @@ public class DataSimulator
 		//Before we simulate, let's write out a line, in JSON, to 
 		//capture the conditions
 
-		Map<String, Object> setup = new HashMap<String, Object>();
-		setup.put("sigma_noise", sigN);
-		setup.put("delta_phi_rad", dPhi);
-		setup.put("signal_to_noise_ratio", SNR);
-		setup.put("drift",drift);
-		setup.put("drift_rate_derivative",driftRateDerivate);
-		setup.put("jitter",jitter);
-		setup.put("len",len);
-		setup.put("amp_modulation_type", ampModType);
-		setup.put("amp_modulation_period", ampModPeriod);
-		setup.put("amp_modulation_duty", ampModDuty);
-		setup.put("amp_phase", ampPhase);
-		setup.put("amp_phase_square", ampPhaseSquare);
-		setup.put("amp_phase_sine", ampPhaseSine);
-		setup.put("signal_classification", signalClass);
-		setup.put("current_time", seed);
-		setup.put("drift_divisor", mDriftDivisor);
-		setup.put("initial_sine_drift", sinDrift);
-		setup.put("initial_cosine_drift", cosDrift);
-		setup.put("simulator_software_version", simulationVersion);
-		setup.put("simulator_software_version_date", simulationVersionDate);
-		setup.put("uuid", UUID.randomUUID().toString());
+		Map<String, Object> privateHeader = new HashMap<String, Object>();
+		privateHeader.put("sigma_noise", sigN);
+		privateHeader.put("delta_phi_rad", dPhi);
+		privateHeader.put("signal_to_noise_ratio", SNR);
+		privateHeader.put("drift",drift);
+		privateHeader.put("drift_rate_derivative",driftRateDerivate);
+		privateHeader.put("jitter",jitter);
+		privateHeader.put("len",len);
+		privateHeader.put("amp_modulation_type", ampModType);
+		privateHeader.put("amp_modulation_period", ampModPeriod);
+		privateHeader.put("amp_modulation_duty", ampModDuty);
+		privateHeader.put("amp_phase", ampPhase);
+		privateHeader.put("amp_phase_square", ampPhaseSquare);
+		privateHeader.put("amp_phase_sine", ampPhaseSine);
+		privateHeader.put("signal_classification", signalClass);
+		privateHeader.put("current_time", seed);
+		privateHeader.put("drift_divisor", mDriftDivisor);
+		privateHeader.put("initial_sine_drift", sinDrift);
+		privateHeader.put("initial_cosine_drift", cosDrift);
+		privateHeader.put("simulator_software_version", simulationVersion);
+		privateHeader.put("simulator_software_version_date", simulationVersionDate);
+		privateHeader.put("uuid", UUID.randomUUID().toString());
 		ObjectMapper mapper = new ObjectMapper();
 
-		String json = mapper.writeValueAsString(setup);
+		String json = mapper.writeValueAsString(privateHeader);
 		System.out.println(json);
-		OS.write(mapper.writeValueAsBytes(setup));
+		OS.write(mapper.writeValueAsBytes(privateHeader));
 		OS.write('\n');
+
+
+		Map<String, Object> publicHeader = new HashMap<String, Object>();
+		publicHeader.put("signal_classification", signalClass);
+		publicHeader.put("uuid", privateHeader.get("uuid"));
+
+		json = mapper.writeValueAsString(publicHeader);
+		System.out.println(json);
+		OS.write(mapper.writeValueAsBytes(publicHeader));
+		OS.write('\n');
+
+
+		int spectrogramSize = 6144;
+		System.out.format("before loop. cosPhi: %.8f, sinPhi: %.8f.%n", cosPhi, sinPhi);
+
+		double prevCosPhi = cosPhi;
+		double prevSinPhi = sinPhi;
+		boolean prevSinSign = sinPhi > 0;
+		boolean ampOn = true;
 
 		// loop over samples
 		for (int i = 0; i < len; ++i)
 		{
 
-			//allow for drift rate to change
-			sinDrift = sinDrift + (driftRateDerivate/1000000.0) / mDriftDivisor;
-			if (Math.abs(sinDrift) > 1) sinDrift = Math.signum(sinDrift);
-			cosDrift = Math.sqrt(1 - sinDrift * sinDrift);
-
-			// propagate signal frequency to next value using drift
-			double temp = cosPhi * cosDrift - sinPhi * sinDrift;
-			sinPhi      = cosPhi * sinDrift + sinPhi * cosDrift;
-			cosPhi = temp;
-
-			// propagate signal frequency to next value by adding jitter
-			// frequency does random walk
-			double sinDelta = 2.0 * (rand.nextDouble() - 0.5) * jitter;
-			double cosDelta = Math.sqrt(1 - sinDelta * sinDelta);
-			temp   = cosPhi * cosDelta - sinPhi * sinDelta;
-			sinPhi = cosPhi * sinDelta + sinPhi * cosDelta;
-			cosPhi = temp;
-
-			// normalization (potential optimization here)
-			double mag = Math.sqrt(cosPhi * cosPhi + sinPhi * sinPhi);
-			cosPhi /= mag;
-			sinPhi /= mag;
-
-			// propagate current signal value to next using updated frequency
-			double tmpX = signalX * cosPhi - signalY * sinPhi;
-			signalY        = signalX * sinPhi + signalY * cosPhi;
-			signalX = tmpX;
-			mag = Math.sqrt(signalX * signalX + signalY * signalY);
-			signalX /= mag;
-			signalY /= mag;
-
-
-			// this creates sidebands in the spectrogram and need to
-			// make sure to have a large enough periodicity so that sidebands are not observed
-			// 
 			signalAmpFactor = SNR;
 			if (ampModType.equals("square")){					
 					if( (i - ampPhaseSquare) % ampModPeriod > ampModPeriod*ampModDuty ) {
@@ -191,8 +177,15 @@ public class DataSimulator
 			double dNoiseX = rand.nextGaussian() * sigN;
 			double dNoiseY = rand.nextGaussian() * sigN;
 			
-			double Xval = dNoiseX + signalX * signalAmpFactor;
-			double Yval = dNoiseY + signalY * signalAmpFactor	;
+
+			double Xval = dNoiseX;
+			double Yval = dNoiseY;
+			
+			if (ampOn) {
+				Xval += signalX * signalAmpFactor;
+				Yval += signalY * signalAmpFactor	;
+			}
+
 			//double Xvald = Xval;
 			//double Yvald = Yval;
 
@@ -206,6 +199,63 @@ public class DataSimulator
 		
 			// write sample to OutputStream
 			OS.write(sample);
+			
+
+			//calculate next amplitude
+
+			//allow for drift rate to change
+			if (driftRateDerivate != 0) {
+				sinDrift = sinDrift + (driftRateDerivate/1000000.0) / mDriftDivisor;
+				if (Math.abs(sinDrift) > 1) sinDrift = Math.signum(sinDrift);
+				cosDrift = Math.sqrt(1 - sinDrift * sinDrift);
+			}
+
+			// propagate signal frequency to next value using drift
+			double temp = cosPhi * cosDrift - sinPhi * sinDrift;
+			sinPhi      = cosPhi * sinDrift + sinPhi * cosDrift;
+			cosPhi = temp;
+
+			// propagate signal frequency to next value by adding jitter
+			// frequency does random walk
+			double sinDelta = 2.0 * (rand.nextDouble() - 0.5) * jitter;
+			double cosDelta = Math.sqrt(1 - sinDelta * sinDelta);
+			temp   = cosPhi * cosDelta - sinPhi * sinDelta;
+			sinPhi = cosPhi * sinDelta + sinPhi * cosDelta;
+			cosPhi = temp;
+
+
+			// normalization (potential optimization here)
+			double mag = Math.sqrt(cosPhi * cosPhi + sinPhi * sinPhi);
+			cosPhi /= mag;
+			sinPhi /= mag;
+
+
+			// propagate current signal value to next using updated frequency
+			double tmpX = signalX * cosPhi - signalY * sinPhi;
+			signalY        = signalX * sinPhi + signalY * cosPhi;
+			signalX = tmpX;
+			mag = Math.sqrt(signalX * signalX + signalY * signalY);
+			signalX /= mag;
+			signalY /= mag;
+
+			// fake anti-aliasing filter...
+			if (cosPhi < -0.99) {
+				if (prevSinSign != sinPhi > 0) {
+					//we've crossed the boundary, need to flip signal switch
+					ampOn = !ampOn;
+					System.out.format("i: %d, line: %d, cosPhi: %.8f, sinPhi: %.8f.%n", i, i/spectrogramSize, cosPhi, sinPhi);
+					
+				}
+			}
+
+			prevSinSign = sinPhi > 0;
+			prevCosPhi = cosPhi;
+			prevSinPhi = sinPhi;
+
+
+			// if (i % spectrogramSize == 0 || i % spectrogramSize == 1) {
+			// 	System.out.format("i: %d, line: %d, X: %d, Y: %d, cosPhi: %.8f, sinPhi: %.8f.%n", i, i/spectrogramSize, X, Y, cosPhi, sinPhi);
+			// }
 
 			// if (i < 10) {
 			// 	if (i == 0) { 
