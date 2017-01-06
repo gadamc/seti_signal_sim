@@ -11,17 +11,21 @@ import java.util.Map;
 
 import java.util.UUID;
 
+import apps.simulate.NoiseGenerator;
+import apps.simulate.GaussianNoise;
+import apps.simulate.FileNoise;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class DataSimulator 
 {
 
-	private static int mExpectedArgs = 12;
+	private static int mExpectedArgs = 13;
 	private static double mDriftDivisor = 1024;
 
 
-	private static int simulationVersion = 5;
-	private static String simulationVersionDate = "16 Dec 2016";
+	private static int simulationVersion = 7;
+	private static String simulationVersionDate = "23 Dec 2016";
 
 	//final protected static char[] hexArray = "0123456789ABCDEF".toCharArray();
 
@@ -33,6 +37,7 @@ public class DataSimulator
 
 		int nextarg = 0;
 		int sigmaN = Integer.parseInt(args[nextarg++]);
+		String noiseFile = args[nextarg++];
 		double deltaPhiRad = Double.parseDouble(args[nextarg++]) / 180.0 * Math.PI;
 		double SNR = Double.parseDouble(args[nextarg++]);
 		double drift = Double.parseDouble(args[nextarg++]);
@@ -50,6 +55,7 @@ public class DataSimulator
 
 		System.out.println("args:\n" 
 			+ "sigmaN = " + sigmaN + "\n"
+			+ "noiseFile = " + noiseFile + "\n"
 			+ "deltaPhiRad = " + deltaPhiRad + "\n"
 			+ "SNR = " + SNR + "\n"
 			+ "drift = " + drift + "\n"
@@ -67,23 +73,35 @@ public class DataSimulator
 
 		// create output file
 		FileOutputStream FOS = new FileOutputStream(new File(filename));
+		NoiseGenerator noiseGen = null;
+
+		if (noiseFile.equals("")){
+			noiseGen = new GaussianNoise(System.currentTimeMillis());
+			noiseGen.setAmp(sigmaN);
+		}
+		else {
+			noiseGen = new FileNoise(noiseFile);
+			noiseGen.setAmp(1.0);
+		}
 		
+
 		// create & write data
 		DataSimulator object = new DataSimulator(
-			sigmaN, deltaPhiRad, SNR, drift, driftRateDerivate, sigmaSquiggle, outputLength, ampModType, ampModPeriod, ampModDuty, FOS, signalClass, seed);
+			noiseGen, sigmaN, deltaPhiRad, SNR, drift, driftRateDerivate, sigmaSquiggle, outputLength, ampModType, ampModPeriod, ampModDuty, FOS, signalClass, seed);
  
 		// close output file
 		FOS.close();
+
+		//close noise generator
+		noiseGen.close();
 	}
 
-	public DataSimulator(int sigN, double dPhi, double SNR, 
+	public DataSimulator(NoiseGenerator noiseGen, int sigN, double dPhi, double SNR, 
 		double drift, double driftRateDerivate, double jitter, int len,
-		String ampModType, double ampModPeriod, double ampModDuty, OutputStream OS, String signalClass, long seed) throws IOException
+		String ampModType, double ampModPeriod, double ampModDuty, OutputStream OS, String signalClass, long seed) throws Exception
 	{
 		Random rand = new Random(seed);
-		
-		// convert SNR from number of STD to counts
-		SNR = SNR * sigN;
+
 
 		// put drift rate and signal jitter into (approximate) Hz/s assuming mDriftDivisor samples in FFT
 		// using small angle approximation for sinDrift
@@ -97,8 +115,8 @@ public class DataSimulator
 		double sinPhi = Math.sin(dPhi);
 
 		// keeps track of signal and sample values from most recent data point
-		double signalX = rand.nextGaussian() * sigN;
-		double signalY = rand.nextGaussian() * sigN;
+		double signalX = rand.nextGaussian();
+		double signalY = rand.nextGaussian();
 		
 		double ampPhase = rand.nextFloat();
 		//we do this to ensure that the bright pixel doesn't happen 
@@ -126,13 +144,14 @@ public class DataSimulator
 		double ampPhaseSquare = ampPhase*ampModPeriod;
 		double ampPhaseSine = (ampPhase - 0.5)*Math.PI;
 
-		double signalAmpFactor = SNR;
+		double signalAmpFactor = SNR * sigN;
 
 		//Before we simulate, let's write out a line, in JSON, to 
 		//capture the conditions
 
 		Map<String, Object> privateHeader = new HashMap<String, Object>();
 		privateHeader.put("sigma_noise", sigN);
+		privateHeader.put("noise_name", noiseGen.getName());
 		privateHeader.put("delta_phi_rad", dPhi);
 		privateHeader.put("signal_to_noise_ratio", SNR);
 		privateHeader.put("drift",drift);
@@ -209,7 +228,7 @@ public class DataSimulator
 			// this creates sidebands in the spectrogram and need to
 			// make sure to have a large enough periodicity so that sidebands are not observed
 			// 
-			signalAmpFactor = SNR;
+			signalAmpFactor = SNR * sigN;
 			if (ampModType.equals("square") || ampModType.equals("brightpixel")){					
 					if( (i - ampPhaseSquare) % ampModPeriod > ampModPeriod*ampModDuty ) {
 						signalAmpFactor = 0;
@@ -220,9 +239,17 @@ public class DataSimulator
 			}
 
 			// generate noise values
-			double dNoiseX = rand.nextGaussian() * sigN;
-			double dNoiseY = rand.nextGaussian() * sigN;
-			
+			double dNoiseX = 0;
+			double dNoiseY = 0;
+			try {
+				dNoiseX = noiseGen.next();
+				dNoiseY = noiseGen.next();
+			}
+			catch (Exception e) {
+				System.out.println("NoiseGen exception at " + i);
+				throw e;
+			}
+
 			double Xval = dNoiseX + signalX * signalAmpFactor;
 			double Yval = dNoiseY + signalY * signalAmpFactor	;
 			//double Xvald = Xval;
@@ -247,7 +274,8 @@ public class DataSimulator
 			// 	//System.out.println(bytesToHex(sample));
 			// }
 		}
-    }
+
+  }
 
 	public static void PrintHelp()
 	{
@@ -256,6 +284,7 @@ public class DataSimulator
 			+ "\tsigmaNoise deltaPhi SNR  drift sigmaSquiggle outputLength ampModType ampModPeriod ampModDuty signalClass filename\n\n"
 			+ "\twhere\n\n"
 			+ "\t  sigmaNoise\t (double 0 - 127) noise mean power, 13 is good choice\n"
+			+ "\t  noiseFile\t (string) path to noise file\n"
 			+ "\t  deltaPhi\t(double -180 - 180) average phase angle (degrees) between samples\n"
 			+ "\t  SNR\t(double) Signal amplitude in terms of sigma_noise\n"
 			+ "\t  drift\t(double) Average drift rate of signal\n"
