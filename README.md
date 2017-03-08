@@ -17,12 +17,13 @@ sbt assembly
 
 ### OLD way, no SBT
 
-Note, without using SBT, these instructions will not create an uber jar and it's unclear 
-if this will run on a spark cluster (the dependecies must be found on all worker nodes). 
+Note, without using SBT, these instructions will not create an uber jar and it's unlikely 
+this will run on a spark cluster (the dependecies must be found on all worker nodes). 
+
 However, for local development this should work. 
 
 Also, the old way requires that all dependency libraries to be downloaded and installed in the "dependcies"
-folder. As of this writing, we are only dependent upon the Jackson tools for generating JSON. 
+folder. As of this writing, the java code is only dependent upon the Jackson tools for generating JSON. 
 
 
 ##### Compile
@@ -44,17 +45,45 @@ jar cfm setisimulator.jar MANIFEST.MF apps/simulate/*.class
 ### Using SBT 
 
 If you've used `sbt` to package the code, the resulting jar file is 
-`target/signalsimulation-assembly-1.0-SNAPSHOT.jar`
+`target/signalsimulation-assembly-8.0.jar`
 
-This jar file is exeucted like any other jar file
+This main class for this jar file, however, is now in [spark/SETISim.scala](spark/SETISim.scala)
 
 ```
 java -jar <jar file> <parameters>
 ```
 
+We now use the ParameterGenerator and related classes to define the parameters of the simulation. 
+In the example below, the `narrowband` option tells the ParameterGenerator to choose a particular
+class and the set of simulation parameters that his definied within its code.
+
+The noise type is determined for the final option. In this case `gaussian` tells the program
+to use the GaussianNoise.java class to generate noise.
+
+##### Properties
+
+You must create the file `resources/simulation.properties`. A template with all of the necessary
+property values is in the repository. You should `cp resoureces/simulation.properties.template resoureces/simulation.properties` and then fill in the values. 
+
+##### Example
 
 ```
-java -jar target/signalsimulation-assembly-1.0-SNAPSHOT.jar 13 "" 100 0.4 -0.0001 -0.0002 0.0001 792576 square 61440 .5 squiggle_pulsed test.data
+java -jar  target/scala-2.11/signalsimulation-assembly-8.0.jar training serial 8 narrowband gaussian
+```
+
+or
+
+```
+java -jar  target/scala-2.11/signalsimulation-assembly-8.0.jar training spark 8 4 narrowband gaussian
+```
+
+```
+java -jar  target/scala-2.11/signalsimulation-assembly-8.0.jar test spark 20 1000 narrowband sunnnoise
+```
+
+
+```
+java -jar  target/scala-2.11/signalsimulation-assembly-8.0.jar private spark 20 10000 narrowband sunnnoise
 ```
 
 
@@ -65,7 +94,10 @@ main class directly.
 
 ```
 source setup.sh #if not done already. Only need to to this once.
-java apps.simulate.DataSimulator <parameters>
+java apps.simulate.DataSimulator <all individual parameters>
+
+//example
+java apps.simulate.DataSimulator 13 "" 100 0.4 -0.0001 -0.0002 0.0001 792576 square 61440 .5 squiggle_pulsed test.data
 ```
 
 
